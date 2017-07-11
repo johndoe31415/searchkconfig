@@ -24,6 +24,7 @@ import os
 import re
 import collections
 import tpg
+import sys
 
 import Tools
 from KConfigParser import KConfigParser
@@ -166,6 +167,8 @@ class KConfigFileParser(object):
 
 	def __init__(self, basedir, filename, replacements = None):
 		self._basedir = basedir
+		if not self._basedir.endswith("/"):
+			self._basedir += "/"
 		self._filename = filename
 		if replacements is None:
 			self._replacements = { }
@@ -177,6 +180,7 @@ class KConfigFileParser(object):
 		self._parse_result = None
 		self._current_menu = None
 		self._conditions = [ ]
+		self._menuconfig_symbols = [ ]
 
 	def _replace_all(self, text):
 		for (src, dst) in self._replacements.items():
@@ -242,12 +246,22 @@ class KConfigFileParser(object):
 						exception = e
 						result = None
 					if result is None:
-						raise Exception("Parse error of %s/%s:%d \"%s\": %s" % (self._basedir, self._filename, lineno, line, exception))
+						raise Exception("Parse error of %s%s:%d \"%s\": %s" % (self._basedir, self._filename, lineno, line, exception))
 
 					if isinstance(result, Menu):
 						self._current_menu = self._current_menu.add_submenu(ConfigMenu(result.text))
 					elif isinstance(result, ConfigurationItem):
-#						print(result)
+						conditionset = set(condition.name for condition in self._conditions if isinstance(condition, Symbol))
+						while len(self._menuconfig_symbols) > 0:
+							if self._menuconfig_symbols[-1] not in conditionset:
+								self._menuconfig_symbols.pop()
+								self._current_menu = self._current_menu.leave_submenu()
+							else:
+								break
+
+						if result.conftype == "menuconfig":
+							self._current_menu = self._current_menu.add_submenu(ConfigMenu(result.symbol.name + " -->"))
+							self._menuconfig_symbols.append(result.symbol.name)
 						option = self._current_menu.add_option(ConfigOption(filename, lineno, result.symbol))
 						option.append_all_conditions(self._conditions)
 					elif isinstance(result, ConfigType):
@@ -275,12 +289,13 @@ class KConfigFileParser(object):
 						self._conditions.append(result.condition)
 					elif isinstance(result, Source):
 						filename = self._replace_all(result.filename)
-						self._parse(filename)
+						self._parse_file(filename)
 					else:
 						raise Exception("Parser returned unknown object: %s for %s" % (str(result), line))
 
-	def _parse(self, filename):
-		with open(self._basedir + "/" + filename) as f:
+	def _parse_file(self, filename):
+		self._parse_stack.append([ filename, 0 ])
+		with open(self._basedir + filename) as f:
 			continued_line = ""
 			for (lineno, line) in enumerate(f, 1):
 				line = line.rstrip("\r\n")
@@ -288,14 +303,28 @@ class KConfigFileParser(object):
 					# Continuation
 					continued_line += line[:-1]
 				else:
+					self._parse_stack[-1][1] = lineno
 					self._parse_line(filename, lineno, continued_line + line)
 					continued_line = ""
+		self._parse_stack.pop()
 
-	def parse(self):
+	def _parse(self):
+		self._parse_stack = [ ]
 		self._parse_result = ConfigMenu(self._filename)
 		self._current_menu = self._parse_result
-		self._parse(self._filename)
+		self._parse_file(self._filename)
 		return self._parse_result
+
+	def parse(self):
+		try:
+			return self._parse()
+		except IndexError as e:
+			print("Parsing error:")
+			for (filename, lineno) in reversed(self._parse_stack):
+				print("    %s%s line %d" % (self._basedir, filename, lineno))
+			print()
+			print("Caused %s" % (e))
+			sys.exit(1)
 
 
 class KConfigScanner(object):
