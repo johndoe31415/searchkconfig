@@ -247,7 +247,7 @@ class KConfigFileParser(object):
 					if isinstance(result, Menu):
 						self._current_menu = self._current_menu.add_submenu(ConfigMenu(result.text))
 					elif isinstance(result, ConfigurationItem):
-						print(result)
+#						print(result)
 						option = self._current_menu.add_option(ConfigOption(filename, lineno, result.symbol))
 						option.append_all_conditions(self._conditions)
 					elif isinstance(result, ConfigType):
