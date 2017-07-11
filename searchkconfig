@@ -1,0 +1,20 @@
+#!/usr/bin/python3
+import sys
+from FriendlyArgumentParser import FriendlyArgumentParser
+from KConfigScanner import KConfigScanner
+
+parser = FriendlyArgumentParser()
+parser.add_argument("-a", "--arch", metavar = "arch", type = str, default = "x86", help = "Source architecture, defaults to '%(default)s'.")
+parser.add_argument("-n", "--no-ignore-case", action = "store_true", help = "Honor case distinctions when searching.")
+parser.add_argument("-s", "--search", metavar = "text", type = str, help = "Search in help text and description text for a particular regular expression and only display those results.")
+parser.add_argument("-c", "--kernel-config", metavar = "path", type = str, help = "Filename of a kernel configuration that is interpreted. Will give more insight on dependencies.")
+parser.add_argument("--startfile", metavar = "path", type = str, default = "Kconfig", help = "Start file to open up, defaults to '%(default)s'.")
+parser.add_argument("--include-unnamed", action = "store_true", help = "Include unnamed options in output.")
+parser.add_argument("--show-origin", action = "store_true", help = "Show origin (filename and line number) of the dumped config options.")
+parser.add_argument("--show-conditions", action = "store_true", help = "Print the preconditions that are required for that option to be available.")
+parser.add_argument("--show-help", action = "store_true", help = "Print the help pages of the dumped config options.")
+parser.add_argument("kernel_path", metavar = "kernel_path", type = str, help = "Kernel source directory to scan")
+args = parser.parse_args(sys.argv[1:])
+
+scanner = KConfigScanner(args)
+scanner.scan()
