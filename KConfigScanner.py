@@ -40,13 +40,44 @@ class ItemType(enum.IntEnum):
 	Choice = 4
 
 class ConfigItem(object):
-	def __init__(self, itemtype, parent = None, text = None, symbol = None):
+	_KEY_ABBREVIATION_RE = re.compile("([abcdefghijklopqrstuvwxz])", re.IGNORECASE)
+	def __init__(self, itemtype, parent = None, text = None, symbol = None, filename = None, lineno = None, conditions = None):
 		self._itemtype = itemtype
 		self._parent = parent
 		self._text = text
 		self._symbol = symbol
-		self._helppage = None
+		self._origin_filename = filename
+		self._origin_lineno = lineno
+		self._helptext = None
 		self._children = [ ]
+		self._visible = False
+		self._conditions = [ ]
+		if conditions is not None:
+			self.append_all_conditions(conditions)
+
+	@property
+	def abbreviation_key(self):
+		if (self.text is None) or (self.itemtype == ItemType.RootMenu):
+			return None
+		result = self._KEY_ABBREVIATION_RE.search(self.text.value)
+		if result is None:
+			return None
+		else:
+			return result.group(0).lower()
+
+	@property
+	def visible(self):
+		return self._visible
+
+	@visible.setter
+	def visible(self, value):
+		self._visible = value
+
+	def set_visible(self):
+		node = self
+		while node is not None:
+			node.visible = True
+			node = node.parent
 
 	@property
 	def itemtype(self):
@@ -69,8 +100,18 @@ class ConfigItem(object):
 	def symbol(self):
 		return self._symbol
 
+	def append_condition(self, condition):
+		self._conditions.append(condition)
+
+	def append_all_conditions(self, conditions):
+		self._conditions += conditions
+
 	def add_helptext_line(self, line):
-		pass
+		line = line.strip()
+		if self._helptext is None:
+			self._helptext = [ line ]
+		else:
+			self._helptext.append(line)
 
 	def matches(self, search_spec):
 		if self.symbol is None:
@@ -83,24 +124,64 @@ class ConfigItem(object):
 			result = None
 			result = result or search_spec.regex.search(self.symbol.name)
 			if self.text is not None:
-				result = result or search_spec.regex.search(self.text)
+				result = result or search_spec.regex.search(self.text.value)
 			return result is not None
 		else:
 			return True
 
-	def search(self, search_spec):
+	def searchlist(self, search_spec):
 		if self.matches(search_spec):
 			yield self
 		for child in self._children:
-			yield from child.search(search_spec)
+			yield from child.searchlist(search_spec)
+
+	def enable_visibility(self, search_spec):
+		count = 0
+		for leafnode in self.searchlist(search_spec):
+			leafnode.set_visible()
+			count += 1
+		return count
+
+	@property
+	def have_help(self):
+		return (self._helptext is not None) and (len(Tools.striplist(self._helptext)) > 0)
+
+	def format_help(self, prefix = ""):
+		helptext = Tools.striplist(self._helptext)
+		return prefix + ("\n" + prefix).join(helptext)
+
+	def format(self, dump_spec = None):
+		if self.text is None:
+			text = self.symbol
+		else:
+			if self.symbol is not None:
+				text = "%s (%s)" % (self.text, self.symbol)
+			else:
+				text = self.text
+
+		if self.symbol is not None:
+			text = self.symbol.get_colorizer(dump_spec.kconfig)(text)
+
+		if (dump_spec is not None) and (dump_spec.show_key):
+			key = self.abbreviation_key
+			if key is not None:
+				text = "(%s) %s" % (key, text)
+
+		if (dump_spec is not None) and (dump_spec.show_origin):
+			text += " {%s:%d}" % (self._origin_filename, self._origin_lineno)
+		if (dump_spec is not None) and (dump_spec.show_conditions):
+			if len(self._conditions) > 0:
+				text += " if "
+				text += " and ".join(condition.format(dump_spec.kconfig) for condition in self._conditions)
+		return text
 
 	def dump(self, dump_spec = None, indent = 0):
+		if not self.visible:
+			return
 		indent_str = "    " * indent
-		print("%s%s %s" % (indent_str, self.text, self.symbol))
-#		for chilon in self._options:
-#			print(indent_str + "  * " + option.format(dump_spec))
-#			if (dump_spec is not None) and (dump_spec.show_help):
-#				print(option.format_help(indent_str + "    "))
+		print("%s%s" % (indent_str, self.format(dump_spec)))
+		if (dump_spec is not None) and (dump_spec.show_help) and self.have_help:
+			print(self.format_help(indent_str + "    "))
 		for child in self._children:
 			child.dump(dump_spec, indent + 1)
 
@@ -109,8 +190,46 @@ class ConfigItem(object):
 		self._children.append(item)
 		return item
 
-	def __str__(self):
-		return "ConfigItem<%s, %s, %s, parent = %s>" % (self.itemtype.name, self.symbol, self.text, self.parent)
+	def _could_be_child_of(self, potential_parent):
+		return (potential_parent is not None) and (potential_parent.symbol is not None) and any(condition.requires(potential_parent.symbol) for condition in self._conditions)
+
+	def _reparent(self, new_parent, new_children):
+		if new_parent is None:
+			return
+#		if len(new_children):
+#			print("Reparenting %d children to %s" % (len(new_children), new_parent))
+		for child in new_children:
+			new_parent.add_item(child)
+
+	def create_submenus(self):
+		potential_parent = None
+		potential_children = [ ]
+		remaining_children = [ ]
+		for child in self._children:
+			if child._could_be_child_of(potential_parent):
+				# Continuation of current submenu
+				potential_children.append(child)
+			elif (child.itemtype in [ ItemType.Config, ItemType.MenuConfig]):
+				# Potential start of submenu
+				self._reparent(potential_parent, potential_children)
+				potential_parent = child
+				potential_children = [ ]
+				remaining_children.append(child)
+			else:
+				# Just regular old additional item
+				self._reparent(potential_parent, potential_children)
+				potential_parent = None
+				potential_children = [ ]
+				remaining_children.append(child)
+
+		self._reparent(potential_parent, potential_children)
+		self._children = remaining_children
+
+		for child in self._children:
+			child.create_submenus()
+
+	def __repr__(self):
+		return "ConfigItem<%s, %s, %s, cond = %s>" % (self.itemtype.name, self.symbol, self.text, self._conditions)
 
 class KConfigFileParser(object):
 	_INDENT_RE = re.compile("(?P<indent>^[ \t]*).*")
@@ -198,7 +317,7 @@ class KConfigFileParser(object):
 					if keyword in [ "endmenu", "endchoice" ]:
 						self._leave_submenu()
 					elif keyword == "choice":
-						self._enter_submenu(ConfigItem(ItemType.Choice))
+						self._enter_submenu(ConfigItem(ItemType.Choice, filename = filename, lineno = lineno, conditions = self._conditions))
 					elif keyword == "endif":
 						self._conditions.pop()
 				else:
@@ -211,25 +330,13 @@ class KConfigFileParser(object):
 						raise Exception("Parse error of %s%s:%d \"%s\": %s" % (self._basedir, self._filename, lineno, line, exception))
 
 					if isinstance(result, Menu):
-						self._enter_submenu(ConfigItem(ItemType.SubMenu, text = result.text))
+						self._enter_submenu(ConfigItem(ItemType.SubMenu, text = result.text, filename = filename, lineno = lineno, conditions = self._conditions))
 					elif isinstance(result, ConfigurationItem):
-#						conditionset = set(condition.name for condition in self._conditions if isinstance(condition, Symbol))
-#						while len(self._menuconfig_symbols) > 0:
-#							if self._menuconfig_symbols[-1] not in conditionset:
-#								self._menuconfig_symbols.pop()
-#								self._current_menuitem = self._current_menuitem.leave_submenu()
-#							else:
-#								break
-
-#						if result.conftype == "menuconfig":
-#							self._current_menuitem = self._current_menuitem.add_submenu(ConfigMenu(result.symbol.name + " -->"))
-#							self._menuconfig_symbols.append(result.symbol.name)
 						if result.conftype == "menuconfig":
 							itemtype = ItemType.MenuConfig
 						else:
 							itemtype = ItemType.Config
-						self._add_item(ConfigItem(itemtype, symbol = result.symbol))
-#						option.append_all_conditions(self._conditions)
+						self._add_item(ConfigItem(itemtype, symbol = result.symbol, filename = filename, lineno = lineno, conditions = self._conditions))
 					elif isinstance(result, ConfigType):
 						if result.text is not None:
 							self._current_item.text = result.text
@@ -238,7 +345,7 @@ class KConfigFileParser(object):
 					elif isinstance(result, DefaultValue):
 						pass
 					elif isinstance(result, DependsOn):
-						pass
+						self._current_item.append_condition(result.dependency)
 					elif isinstance(result, Select):
 						pass
 					elif isinstance(result, Range):
@@ -248,14 +355,13 @@ class KConfigFileParser(object):
 					elif isinstance(result, Comment):
 						pass
 					elif isinstance(result, VisibleIf):
-						pass
-						#self._current_menuitem.current_option.append_option(result.condition)
+						self._current_item.append_condition(result.condition)
 					elif isinstance(result, Imply):
 						pass
 					elif isinstance(result, Conditional):
 						self._conditions.append(result.condition)
 					elif isinstance(result, Source):
-						filename = self._replace_all(result.filename)
+						filename = self._replace_all(result.filename.value)
 						self._parse_file(filename)
 					else:
 						raise Exception("Parser returned unknown object: %s for %s" % (str(result), line))
@@ -277,7 +383,7 @@ class KConfigFileParser(object):
 
 	def _parse(self):
 		self._parse_stack = [ ]
-		self._parse_result = ConfigItem(ItemType.RootMenu, text = self._filename)
+		self._parse_result = ConfigItem(ItemType.RootMenu, text = self._filename, filename = self._filename, lineno = 0)
 		self._current_menu = self._parse_result
 		self._current_item = self._parse_result
 		self._parse_file(self._filename)
@@ -297,7 +403,7 @@ class KConfigFileParser(object):
 
 class KConfigScanner(object):
 	_SearchSpec = collections.namedtuple("SearchSpec", [ "regex", "include_unnamed" ])
-	_DumpSpec = collections.namedtuple("DumpSpec", [ "show_origin", "show_help", "show_conditions", "kconfig" ])
+	_DumpSpec = collections.namedtuple("DumpSpec", [ "show_origin", "show_help", "show_conditions", "show_key", "kconfig" ])
 
 	def __init__(self, args):
 		self._args = args
@@ -311,18 +417,19 @@ class KConfigScanner(object):
 		variables = {
 			"$SRCARCH":		self._args.arch,
 		}
-		self._root = KConfigFileParser(self._basedir, self._args.startfile, variables).parse()
-		self._root.dump()
+		rootnode = KConfigFileParser(self._basedir, self._args.startfile, variables).parse()
 		if self._args.search is None:
 			search_spec = self._SearchSpec(regex = None, include_unnamed = self._args.include_unnamed)
 		else:
 			regex = re.compile(self._args.search, flags = 0 if self._args.no_ignore_case else re.IGNORECASE)
 			search_spec = self._SearchSpec(regex = regex, include_unnamed = self._args.include_unnamed)
-		result = list(self._root.search(search_spec))
+		if not self._args.no_submenus:
+			rootnode.create_submenus()
+		result = rootnode.enable_visibility(search_spec)
 
-		if result is None:
+		if result == 0:
 			print("Sorry, no search results that matched your criteria.")
 		else:
-			dump_spec = self._DumpSpec(show_origin = self._args.show_origin, show_help = self._args.show_help, show_conditions = self._args.show_conditions, kconfig = self._kconfig)
-			result.dump(dump_spec)
+			dump_spec = self._DumpSpec(show_origin = self._args.show_origin, show_help = self._args.show_help, show_conditions = self._args.show_conditions, show_key = True, kconfig = self._kconfig)
+			rootnode.dump(dump_spec)
 

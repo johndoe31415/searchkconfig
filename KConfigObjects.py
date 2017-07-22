@@ -40,6 +40,20 @@ Conditional = collections.namedtuple("Conditional", [ "condition" ])
 Comparison = collections.namedtuple("Comparison", [ "lhs", "op", "rhs" ])
 ConfigurationItem = collections.namedtuple("ConfigurationItem", [ "conftype", "symbol" ])
 
+class Literal(object):
+	def __init__(self, value):
+		self._value = value
+
+	@property
+	def value(self):
+		return self._value
+
+	def requires(self, symbol):
+		return False
+
+	def __str__(self):
+		return self.value
+
 class Symbol(object):
 	def __init__(self, name):
 		self._name = name
@@ -47,6 +61,9 @@ class Symbol(object):
 	@property
 	def name(self):
 		return self._name
+
+	def requires(self, symbol):
+		return symbol == self
 
 	def _get_color(self, kconfig):
 		value = kconfig[self.name]
@@ -69,6 +86,21 @@ class Symbol(object):
 		else:
 			return self.name
 
+	def _cmpkey(self):
+		return ("symbol", self.name)
+
+	def __eq__(self, other):
+		return (self.__class__ == other.__class__) and (self._cmpkey() == other._cmpkey())
+
+	def __lt__(self, other):
+		return (self.__class__ == other.__class__) and (self._cmpkey() < other._cmpkey())
+
+	def __neq__(self, other):
+		return not (self == other)
+
+	def __hash__(self):
+		return hash(self._cmpkey())
+
 	def __repr__(self):
 		return self._name
 
@@ -77,6 +109,14 @@ class Comparison(object):
 		self._lhs = lhs
 		self._op = op
 		self._rhs = rhs
+
+	def requires(self, symbol):
+		if self._op == "&&":
+			return self._lhs.requires(symbol) or self._rhs.requires(symbol)
+		elif self._op == "||":
+			return self._lhs.requires(symbol) and self._rhs.requires(symbol)
+		else:
+			return False
 
 	def format(self, kconfig = None):
 		if self._lhs is None:

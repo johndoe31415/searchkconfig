@@ -1,0 +1,149 @@
+#!/usr/bin/python3
+import re
+import os
+import sys
+import collections
+import json
+from FriendlyArgumentParser import FriendlyArgumentParser
+
+def gen_regex(fncname, params):
+	text = fncname + r"\s*\(\s*"
+	fncsep = "\s*,\s*"
+	int_value = "(0[xX][0-9a-fA-F]+)|\d+|[A-Za-z0-9_]+"
+	text += fncsep.join("(?P<%s>%s)" % (param, int_value) for param in params)
+
+	text += r"\s*\)"
+	return re.compile(text)
+	
+def _toint(value, defines = { }):
+	if value.lower().startswith("0x"):
+		return int(value, 16)
+	else:
+		if value.isdigit():
+			return int(value)
+		else:
+			lookup = defines.get(value)
+#			print("Success", value, lookup)
+			return lookup
+
+class KernelFileScanner(object):
+	_Match = collections.namedtuple("Match", [ "filename", "lineno", "conntype", "matchtype", "criteria" ])
+	_MATCH_TYPES = [
+		("usb", "device", gen_regex("USB_DEVICE", [ "vendorid", "productid" ])),
+		("usb", "device_version", gen_regex("USB_DEVICE_VER", [ "vendorid", "productid", "bcdDevice_lo", "bcdDevice_hi" ])),
+		("usb", "device_interface_class", gen_regex("USB_DEVICE_INTERFACE_CLASS", [ "vendorid", "productid", "bInterfaceClass" ])),
+		("usb", "device_interface_protocol", gen_regex("USB_DEVICE_INTERFACE_PROTOCOL", [ "vendorid", "productid", "bInterfaceProtocol" ])),
+		("usb", "device_interface_number", gen_regex("USB_DEVICE_INTERFACE_NUMBER", [ "vendorid", "productid", "bInterfaceNumber" ])),
+		("usb", "device_info", gen_regex("USB_DEVICE_INFO", [ "bDeviceClass", "bDeviceSubClass", "bDeviceProtocol" ])),
+		("usb", "interface_info", gen_regex("USB_INTERFACE_INFO", [ "bInterfaceClass", "bInterfaceSubClass", "bInterfaceProtocol" ])),
+		("usb", "device_interface_info", gen_regex("USB_DEVICE_AND_INTERFACE_INFO", [ "vendorid", "productid", "bInterfaceClass", "bInterfaceSubClass", "bInterfaceProtocol" ])),
+		("usb", "vendor_interface_info", gen_regex("USB_VENDOR_AND_INTERFACE_INFO", [ "vendorid", "bInterfaceClass", "bInterfaceSubClass", "bInterfaceProtocol" ])),
+		("pci", "device", gen_regex("PCI_DEVICE", [ "vendorid", "productid" ])),
+	]
+
+	def __init__(self, filename, defines):
+		self._filename = filename
+		self._f = None
+		self._defines = defines
+
+	def _match_line(self, line, lineno):
+		for (conntype, matchtype, regex) in self._MATCH_TYPES:
+			result = regex.search(line)
+			if result:
+				result = result.groupdict()
+				criteria = { key: _toint(value, self._defines) for (key, value) in result.items() }
+				if all(value is not None for value in criteria.values()):
+					return self._Match(filename = self._filename, lineno = lineno, conntype = conntype, matchtype = matchtype, criteria = criteria)
+#				else:
+#					print("Regex match, but unsuccessuful substitution:", line)
+
+	def scan(self):
+		with open(self._filename, encoding = "latin1") as f:
+			self._f = f
+			for (lineno, line) in enumerate(f, 1):
+				line = line.rstrip("\r\n")
+				if not any(keyword in line for keyword in [ "USB_DEVICE", "PCI_DEVICE" ]):
+					# Shortcut, because substitution is expensive
+					continue
+				match = self._match_line(line, lineno)
+				if match:
+					yield match
+				
+							
+class KernelDeviceScanner(object):
+	_DEFINE_INT_RE = re.compile(r"\s*#define\s+(?P<key>[A-Za-z0-9_]+)\s+\(?(?P<value>0[xX][0-9a-fA-F]+|\d+)\)?(\s*(/\*|//).*)?")
+	_DEFINE_SHIFTED_INT_RE = re.compile(r"\s*#define\s+(?P<key>[A-Za-z0-9_]+)\s+\(?(?P<value>0x[0-9a-fA-F]+|\d+)\s*<<\s*(?P<shift>0[xX][0-9a-fA-F]+|\d+)\)?(\s*(/\*|//).*)?")
+
+	def __init__(self, args):
+		self._args = args
+		self._defines = { }
+
+	def _files_with_suffix(self, suffix):
+		for (basedir, dirs, filenames) in os.walk(self._args.kernel_path):
+			for filename in filenames:
+				if filename.endswith(suffix):
+					full_filename = basedir
+					if not full_filename.endswith("/"):
+						full_filename += "/"
+					full_filename += filename
+					yield full_filename			
+
+	def _scan_header(self, filename):
+		with open(filename, encoding = "latin1") as f:
+			for line in f:
+				line = line.rstrip("\r\n")
+				result = self._DEFINE_INT_RE.fullmatch(line)				
+				if result is not None:
+					result = result.groupdict()
+					(key, value) = (result["key"], result["value"])
+					self._defines[key] = _toint(value)
+				else:
+					result = self._DEFINE_SHIFTED_INT_RE.fullmatch(line)
+					if result:
+						result = result.groupdict()
+						value = _toint(result["value"]) << _toint(result["shift"])
+						(key, value) = (result["key"], value)
+						self._defines[key] = value
+#					else:
+#						print("No #define regex match:", line)
+
+	def find_matches(self):
+		print("Parsing header files for #defines")
+		for filename in self._files_with_suffix(".h"):
+			self._scan_header(filename)
+		print("Parsing source files for #defines")
+		for filename in self._files_with_suffix(".c"):
+			self._scan_header(filename)
+		print("Parsed %d #defines in total." % (len(self._defines)))
+		print("Parsing source files")
+		for filename in self._files_with_suffix(".c"):
+			yield from KernelFileScanner(filename, self._defines).scan()
+
+	def scan(self):
+		trunclen = len(self._args.kernel_path)
+		if not self._args.kernel_path.endswith("/"):
+			trunclen += 1
+		match_by_conntype = collections.defaultdict(list)		
+		for match in self.find_matches():
+			match_by_conntype[match.conntype].append({
+				"filename":		match.filename[ trunclen : ],
+				"lineno":		match.lineno,
+				"matchtype":	match.matchtype,
+				"criteria":		match.criteria,
+			})
+		for (conntype, matchlist) in match_by_conntype.items():
+			matchlist.sort(key = lambda itm: (itm["filename"], itm["lineno"]))
+		return match_by_conntype
+		
+
+parser = FriendlyArgumentParser()
+parser.add_argument("-o", "--outfile", metavar = "path", type = str, default = "drivers.json", help = "Output JSON file to write info to. Defaults to %(default)s.")
+parser.add_argument("kernel_path", metavar = "kernel_path", type = str, help = "Kernel source directory to scan")
+args = parser.parse_args(sys.argv[1:])
+
+scanner = KernelDeviceScanner(args)
+result = scanner.scan()
+print("Found %d USB devices and %d PCI devices." % (len(result["usb"]), len(result["pci"])))
+with open(args.outfile, "w") as f:
+	print(json.dumps(result, indent = 4, sort_keys = True), file = f)
+

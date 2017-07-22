@@ -54,7 +54,27 @@ def apparent_length(text, tabsize = 8):
 			length += 1
 	return length
 
+def striplist(l):
+	for (first_index, value) in enumerate(l):
+		if value != "":
+			break
+	else:
+		# List only consists of empty strings
+		return [ ]
+
+	for (last_index, value) in enumerate(reversed(l)):
+		if value != "":
+			break
+
+	return l[first_index : len(l) - last_index]
+
 if __name__ == "__main__":
 	assert(apparent_length("\t  ", tabsize = 4) == 6)
 	assert(apparent_length("\t  ", tabsize = 8) == 10)
 	assert(apparent_length(" \t", tabsize = 8) == 8)
+	assert(striplist([ "1" ]) == [ "1" ])
+	assert(striplist([ "", "1", "", "", "" ]) == [ "1" ])
+	assert(striplist([ "", "1", "2", "", "", "" ]) == [ "1", "2" ])
+	assert(striplist([ ]) == [ ])
+	assert(striplist([ "" ]) == [ ])
+	assert(striplist([ "", "", "" ]) == [ ])

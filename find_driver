@@ -1,0 +1,60 @@
+#!/usr/bin/python3
+import sys
+import json
+from FriendlyArgumentParser import FriendlyArgumentParser
+
+parser = FriendlyArgumentParser()
+parser.add_argument("-c", "--conffile", metavar = "path", type = str, default = "drivers.json", help = "Input JSON file that contains extracted driver information from kernel. Defaults to %(default)s.")
+parser.add_argument("-i", "--incomplete", action = "store_true", help = "Also show incomplete matches, e.g., when kernel info is more specific than user-provided data.")
+parser.add_argument("search", metavar = "searchterm", nargs = "+", type = str, help = "Kernel source directory to scan")
+args = parser.parse_args(sys.argv[1:])
+
+def _toint(value):
+	if value.lower().startswith("0x"):
+		return int(value, 16)
+	else:
+		return int(value)
+
+class SearchTerm(object):
+	_known_keys = [ "vendorid", "productid", "bcdDevice", "bDeviceClass", "bDeviceProtocol", "bDeviceSubClass", "bInterfaceClass", "bInterfaceProtocol", "bInterfaceNumber" ]
+	def __init__(self, term):
+		if term == "usb":
+			self._checkfnc = lambda devicetype, device: devicetype == "usb"
+		elif term == "pci":
+			self._checkfnc = lambda devicetype, device: devicetype == "pci"
+		elif "=" in term:
+			(key, value) = term.split("=", maxsplit = 1)
+			if key not in self._known_keys:
+				raise Exception("%s is a unrecognized key. Permissible: %s" % (key, ", ".join(sorted(self._known_keys))))
+			try:
+				value = _toint(value)
+			except ValueError:
+				raise Exception("Cannot parse '%s' passed as %s." % (value, key))
+			if key != "bcdDevice":				
+				self._checkfnc = lambda devicetype, device: device["criteria"].get(key) == value
+			else:
+				self._checkfnc = lambda devicetype, device: (device["criteria"].get(key + "_lo", -1) <= value <= device["criteria"].get(key + "_hi", -1))
+		else:
+			raise Exception("Unknown search term '%s." % (term))
+
+	def matches(self, devicetype, device):
+		return self._checkfnc(devicetype, device)
+
+with open(args.conffile) as f:
+	driver_data = json.loads(f.read())
+
+def print_device(devicetype, device):
+	print("%s device from %s : %d" % (devicetype, device["filename"], device["lineno"]))
+	for key in [ "vendorid", "productid", "bcdDevice_lo", "bcdDevice_hi", "bDeviceClass", "bDeviceProtocol", "bDeviceSubClass", "bInterfaceClass", "bInterfaceProtocol", "bInterfaceNumber" ]:
+		if key in device["criteria"]:
+			value = device["criteria"][key]
+			print("    %-30s 0x%x" % (key, value))
+	print()
+
+searchterms = [ SearchTerm(term) for term in args.search ]
+for (devicetype, devices) in driver_data.items():
+	for device in devices:
+		match = [ searchterm.matches(devicetype, device) for searchterm in searchterms ]
+		if all(match):
+			print_device(devicetype, device)
+

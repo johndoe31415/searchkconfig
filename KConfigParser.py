@@ -21,7 +21,7 @@
 #
 
 import tpg
-from KConfigObjects import Symbol, Source, ConfigurationItem, Menu, ConfigType, Option, Comparison, DefaultValue, DependsOn, Select, DefType, Conditional, Range, Comment, Imply, VisibleIf
+from KConfigObjects import Symbol, Source, ConfigurationItem, Menu, ConfigType, Option, Comparison, DefaultValue, DependsOn, Select, DefType, Conditional, Range, Comment, Imply, VisibleIf, Literal
 
 def _to_int(value):
 	if value.startswith("0x"):
@@ -64,13 +64,13 @@ class KConfigParser(tpg.VerboseParser):
 		START/s -> ConfigurationItem/s;
 
 		QuotedString/s ->
-			'"' '(\\"|[^"])*'/s '"'					$ s.replace("foo", "bar")
-			| '\'' '[^\']*'/s '\''
+			'"' '(\\"|[^"])*'/s '"'					$ s = Literal(s.replace("\\\"", "\""))
+			| '\'' '[^\']*'/s '\''					$ s = Literal(s.replace("\\'", "'"))
 		;
 
 		String/s ->
 			QuotedString/s
-			| '[^\s]+'/s
+			| '[^\s]+'/s							$ s = Literal(s)
 		;
 
 		ConfigurationItem/c ->
@@ -110,7 +110,7 @@ class KConfigParser(tpg.VerboseParser):
 		Term/t ->
 			(
 				'\(' Expression/t '\)'
-				| '[ynm]'/t
+				| '[ynm]'/t																$ t = Literal(t)
 				| symbol/t
 				| String/t
 			)

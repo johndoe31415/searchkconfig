@@ -13,6 +13,7 @@ parser.add_argument("--include-unnamed", action = "store_true", help = "Include 
 parser.add_argument("--show-origin", action = "store_true", help = "Show origin (filename and line number) of the dumped config options.")
 parser.add_argument("--show-conditions", action = "store_true", help = "Print the preconditions that are required for that option to be available.")
 parser.add_argument("--show-help", action = "store_true", help = "Print the help pages of the dumped config options.")
+parser.add_argument("--no-submenus", action = "store_true", help = "Do not convert 'menuconfig' options into submenus.")
 parser.add_argument("kernel_path", metavar = "kernel_path", type = str, help = "Kernel source directory to scan")
 args = parser.parse_args(sys.argv[1:])
 
