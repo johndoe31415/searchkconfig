@@ -20,9 +20,9 @@ Usage is quite straightforward, see the help page:
 $ ./searchkconfig
 Error: the following arguments are required: kernel_path
 
-usage: searchkconfig [-h] [-a arch] [-n] [-s text] [--startfile path]
-                     [--include-unnamed] [--show-origin] [--show-conditions]
-                     [--show-help]
+usage: searchkconfig [-h] [-a arch] [-n] [-s text] [-c path]
+                     [--startfile path] [--include-unnamed] [--show-origin]
+                     [--show-conditions] [--show-help] [--no-submenus]
                      kernel_path
 
 positional arguments:
@@ -36,6 +36,9 @@ optional arguments:
                         Search in help text and description text for a
                         particular regular expression and only display those
                         results.
+  -c path, --kernel-config path
+                        Filename of a kernel configuration that is
+                        interpreted. Will give more insight on dependencies.
   --startfile path      Start file to open up, defaults to 'Kconfig'.
   --include-unnamed     Include unnamed options in output.
   --show-origin         Show origin (filename and line number) of the dumped
@@ -43,21 +46,27 @@ optional arguments:
   --show-conditions     Print the preconditions that are required for that
                         option to be available.
   --show-help           Print the help pages of the dumped config options.
+  --no-submenus         Do not convert 'menuconfig' options into submenus.
 </pre>
 
 Example:
 
 <pre>
-$ ./searchkconfig -a arm -s 'realtek.*8188' --show-conditions /usr/src/linux-4.12
+$ ./searchkconfig -a arm -s 'realtek.*8188' /usr/src/linux-4.12
 Kconfig
-    Linux/$ARCH $KERNELVERSION Kernel Configuration
-        Device Drivers
-          * Realtek RTL8192CE/RTL8188CE Wireless Network Adapter (RTL8192CE) if NETDEVICES and WLAN and WLAN_VENDOR_REALTEK and RTL_CARDS
-          * Realtek RTL8192DE/RTL8188DE PCIe Wireless Network Adapter (RTL8192DE) if NETDEVICES and WLAN and WLAN_VENDOR_REALTEK and RTL_CARDS
-          * Realtek RTL8188EE Wireless Network Adapter (RTL8188EE) if NETDEVICES and WLAN and WLAN_VENDOR_REALTEK and RTL_CARDS
-          * Realtek RTL8192CU/RTL8188CU USB Wireless Network Adapter (RTL8192CU) if NETDEVICES and WLAN and WLAN_VENDOR_REALTEK and RTL_CARDS
-          * Realtek RTL8188EU Wireless LAN NIC driver (R8188EU) if STAGING
-          * Realtek RTL8188EU AP mode (88EU_AP_MODE) if STAGING and R8188EU
+    (l) Linux/$ARCH $KERNELVERSION Kernel Configuration
+        (d) Device Drivers
+            (e) Network device support (NETDEVICES)
+                (w) Wireless LAN (WLAN)
+                    (r) Realtek devices (WLAN_VENDOR_REALTEK)
+                        (r) Realtek rtlwifi family of devices (RTL_CARDS)
+                            (r) Realtek RTL8192CE/RTL8188CE Wireless Network Adapter (RTL8192CE)
+                            (r) Realtek RTL8192DE/RTL8188DE PCIe Wireless Network Adapter (RTL8192DE)
+                            (r) Realtek RTL8188EE Wireless Network Adapter (RTL8188EE)
+                            (r) Realtek RTL8192CU/RTL8188CU USB Wireless Network Adapter (RTL8192CU)
+            (s) Staging drivers (STAGING)
+                (r) Realtek RTL8188EU Wireless LAN NIC driver (R8188EU)
+                    (r) Realtek RTL8188EU AP mode (88EU_AP_MODE)
 </pre>
 
 # TODOs
