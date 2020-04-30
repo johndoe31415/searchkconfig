@@ -29,7 +29,7 @@ import sys
 
 import Tools
 from KConfigParser import KConfigParser
-from KConfigObjects import Symbol, Source, ConfigurationItem, Menu, ConfigType, Option, DefaultValue, DependsOn, Select, DefType, Conditional, Range, Comment, Imply, VisibleIf
+from KConfigObjects import Symbol, Source, ConfigurationItem, Menu, ConfigType, Option, DefaultValue, DependsOn, Select, DefType, Conditional, Range, Comment, Imply, VisibleIf, Assignment
 from KernelConfiguration import KernelConfiguration, ConfigOptionState
 
 class ItemType(enum.IntEnum):
@@ -327,7 +327,10 @@ class KConfigFileParser(object):
 						exception = e
 						result = None
 					if result is None:
-						raise Exception("Parse error of %s%s:%d \"%s\": %s" % (self._basedir, self._filename, lineno, line, exception))
+						print("Parsing stack:")
+						for (filename, lineno) in self._parse_stack:
+							print("   %s line %d" % (filename, lineno))
+						raise Exception("Parse error of %s%s:%d \"%s\": %s" % (self._basedir, self._parse_stack[-1][0], lineno, line, exception))
 
 					if isinstance(result, Menu):
 						self._enter_submenu(ConfigItem(ItemType.SubMenu, text = result.text, filename = filename, lineno = lineno, conditions = self._conditions))
@@ -363,6 +366,8 @@ class KConfigFileParser(object):
 					elif isinstance(result, Source):
 						filename = self._replace_all(result.filename.value)
 						self._parse_file(filename)
+					elif isinstance(result, Assignment):
+						pass
 					else:
 						raise Exception("Parser returned unknown object: %s for %s" % (str(result), line))
 
@@ -416,6 +421,7 @@ class KConfigScanner(object):
 	def scan(self):
 		variables = {
 			"$SRCARCH":		self._args.arch,
+			"$(SRCARCH)":	self._args.arch,
 		}
 		rootnode = KConfigFileParser(self._basedir, self._args.startfile, variables).parse()
 		if self._args.search is None:

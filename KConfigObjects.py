@@ -39,6 +39,8 @@ VisibleIf = collections.namedtuple("VisibleIf", [ "condition" ])
 Conditional = collections.namedtuple("Conditional", [ "condition" ])
 Comparison = collections.namedtuple("Comparison", [ "lhs", "op", "rhs" ])
 ConfigurationItem = collections.namedtuple("ConfigurationItem", [ "conftype", "symbol" ])
+Assignment = collections.namedtuple("Assignment", [ "lhs", "rhs" ])
+ExecutionExpression = collections.namedtuple("ExecutionExpression", [ "value" ])
 
 class Literal(object):
 	def __init__(self, value):

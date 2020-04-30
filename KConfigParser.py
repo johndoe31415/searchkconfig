@@ -21,7 +21,7 @@
 #
 
 import tpg
-from KConfigObjects import Symbol, Source, ConfigurationItem, Menu, ConfigType, Option, Comparison, DefaultValue, DependsOn, Select, DefType, Conditional, Range, Comment, Imply, VisibleIf, Literal
+from KConfigObjects import Symbol, Source, ConfigurationItem, Menu, ConfigType, Option, Comparison, DefaultValue, DependsOn, Select, DefType, Conditional, Range, Comment, Imply, VisibleIf, Literal, Assignment, ExecutionExpression
 
 def _to_int(value):
 	if value.startswith("0x"):
@@ -43,7 +43,7 @@ class KConfigParser(tpg.VerboseParser):
 
 		token intval			'0x[0-9a-fA-F]+|-?\d+'		$ _to_int
 
-		token kw_type			'(string|hex|bool|prompt|tristate|int)';
+		token kw_type			'(string|hex|boolean|bool|prompt|tristate|int)';
 		token kw_deftype		'(def_bool|def_tristate)';
 		token kw_range			'range';
 		token kw_default		'default';
@@ -56,10 +56,11 @@ class KConfigParser(tpg.VerboseParser):
 		token kw_choice			"choice";
 		token kw_endchoice		"endchoice";
 
+		token assign_op			':=';
 		token cmp_op			'=|!=|&&|\|\||>=|<=|>|<';
 		token unary_op			'!';
 		token comment			'#[^\n]*';
-		token symbol			'[A-Za-z0-9_]+'		$ Symbol
+		token symbol			'[-A-Za-z0-9_]+'		$ Symbol
 
 		START/s -> ConfigurationItem/s;
 
@@ -73,12 +74,25 @@ class KConfigParser(tpg.VerboseParser):
 			| '[^\s]+'/s							$ s = Literal(s)
 		;
 
+		ExpressionConcatenation/e ->
+			Expression/e+
+			| Substitution/e
+		;
+
+		Substitution/s ->
+			'[^()]+'/s
+			| '\(' Substitution/s '\)'				$ s = "(" + s + ")"
+		;
+
 		ConfigurationItem/c ->
 			(																						$ expr = None
 				kw_config/key symbol/s																$ c = ConfigurationItem(conftype = key, symbol = s)
 				| kw_menu/key String/s																$ c = Menu(menutype = key, text = s)
 				| 'source'/key String/s																$ c = Source(filename = s)
 				| 'comment'/key String/s															$ c = Comment(text = s)
+				| symbol/lhs assign_op ExpressionConcatenation/rhs									$ c = Assignment(lhs, rhs)
+				| symbol/lhs assign_op																$ c = Assignment(lhs, rhs = None)
+				| symbol/lhs '=' Expression/rhs														$ c = Assignment(lhs, rhs)
 				| kw_type/t String/s (kw_if Expression/expr)?										$ c = ConfigType(typename = t, text = s, condition = expr)
 				| kw_type/t																			$ c = ConfigType(typename = t, text = None, condition = None)
 				| kw_deftype/t Expression/s (kw_if Expression/expr)?								$ c = DefType(typename = t, value = s, condition = expr)
@@ -101,7 +115,8 @@ class KConfigParser(tpg.VerboseParser):
 
 		Expression/e ->
 			(
-				unary_op/op Expression/e												$ e = Comparison(lhs = None, op = op, rhs = e)
+				'\$\(' Substitution/e+ '\)'												$ e = ExecutionExpression(e)
+				| unary_op/op Expression/e												$ e = Comparison(lhs = None, op = op, rhs = e)
 				| Term/lhs cmp_op/op Expression/rhs										$ e = Comparison(lhs = lhs, op = op, rhs = rhs)
 				| Term/e
 			)
@@ -151,4 +166,5 @@ if __name__ == "__main__":
 	print(try_parse("default ARCH != \"i386\""))
 	print(try_parse("default ARCH_MXC || SOC_IMX28 if ARM"))
 	print(try_parse("default !IA64 && !(TILE && 64BIT)"))
-
+	print(try_parse("	def_bool $(success,$(CC) --version | head -n 1 | grep -q gcc)"))
+	print(try_parse("space       := $(empty) $(empty)"))
